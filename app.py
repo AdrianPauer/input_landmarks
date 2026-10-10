@@ -74,17 +74,18 @@ if uploaded_file is not None:
     with col2:
         st.subheader("Controls")
 
+        # Undo Button
         if st.button("Undo Last Point", use_container_width=True):
             if len(st.session_state.points) > 0:
                 st.session_state.points.pop()
-                st.session_state.last_click = None
+                # DO NOT reset last_click here!
                 st.rerun()
 
+        # Clear Button
         if st.button("Clear All Points", type="primary", use_container_width=True):
             st.session_state.points = []
-            st.session_state.last_click = None
+            # DO NOT reset last_click here!
             st.rerun()
-
         st.divider()
 
         # Save Button

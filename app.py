@@ -4,13 +4,10 @@ import numpy as np
 import json
 from streamlit_image_coordinates import streamlit_image_coordinates
 
-# Set up the page
 st.set_page_config(layout="wide", page_title="Landmark Selector")
 TARGET_POINTS = 16
+MAX_DIM = 800  # Cap the display size to make the app fast
 
-# --- Initialize Session State ---
-# Streamlit re-runs the whole script on every interaction.
-# Session state keeps your variables alive between re-runs.
 if "points" not in st.session_state:
     st.session_state.points = []
 if "last_click" not in st.session_state:
@@ -18,64 +15,71 @@ if "last_click" not in st.session_state:
 
 st.title(f"Mark Exactly {TARGET_POINTS} Landmarks")
 
-# File uploader for the web interface
 uploaded_file = st.file_uploader("Upload a high-res image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    # Convert uploaded file to an OpenCV image
+    # 1. Load the original image
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
     img_orig = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-
-    # OpenCV uses BGR, but Streamlit expects RGB
     img_rgb = cv2.cvtColor(img_orig, cv2.COLOR_BGR2RGB)
     orig_h, orig_w = img_rgb.shape[:2]
 
-    # Draw existing points on a copy of the image
-    img_display = img_rgb.copy()
-    for idx, (x, y) in enumerate(st.session_state.points):
-        # Draw red circle and text (RGB format: 255, 0, 0 is Red)
-        cv2.circle(img_display, (x, y), 6, (255, 0, 0), -1)
+    # 2. Resize the image to make the web app fast
+    if max(orig_h, orig_w) > MAX_DIM:
+        scale_factor = MAX_DIM / float(max(orig_h, orig_w))
+        disp_w = int(orig_w * scale_factor)
+        disp_h = int(orig_h * scale_factor)
+        img_display = cv2.resize(img_rgb, (disp_w, disp_h), interpolation=cv2.INTER_AREA)
+    else:
+        scale_factor = 1.0
+        img_display = img_rgb.copy()
+
+    # 3. Draw existing points on the small display image
+    for idx, (ox, oy) in enumerate(st.session_state.points):
+        # Convert high-res saved coordinates down to display size
+        dx = int(ox * scale_factor)
+        dy = int(oy * scale_factor)
+
+        cv2.circle(img_display, (dx, dy), 4, (255, 0, 0), -1)
         cv2.putText(
-            img_display, str(idx + 1), (x + 10, y - 10),
-            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2, cv2.LINE_AA
+            img_display, str(idx + 1), (dx + 8, dy - 8),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2, cv2.LINE_AA
         )
 
-    # UI Layout: Image on the left, controls on the right
     col1, col2 = st.columns([3, 1])
 
     with col1:
         st.write(f"**Points Selected:** {len(st.session_state.points)} / {TARGET_POINTS}")
 
-        # Render the image and capture clicks
-        # This component automatically scales the image to fit the column width
-        # but returns coordinates mapped to the ORIGINAL image resolution!
+        # 4. Render the fast, lightweight resized image
         value = streamlit_image_coordinates(img_display, key="image_click")
 
-        # Process the click
         if value is not None:
-            point = (value["x"], value["y"])
+            # The click coordinates from the 800px image
+            click_point = (value["x"], value["y"])
 
-            # Prevent double-registering the same click event
-            if point != st.session_state.last_click:
-                st.session_state.last_click = point
+            if click_point != st.session_state.last_click:
+                st.session_state.last_click = click_point
+
+                # Convert the click back up to original high-res coordinates
+                orig_x = int(value["x"] / scale_factor)
+                orig_y = int(value["y"] / scale_factor)
 
                 if len(st.session_state.points) < TARGET_POINTS:
-                    st.session_state.points.append(point)
-                    st.rerun()  # Immediately refresh the UI to show the new dot
+                    st.session_state.points.append((orig_x, orig_y))
+                    st.rerun()
                 else:
                     st.warning(f"Maximum of {TARGET_POINTS} points reached!")
 
     with col2:
         st.subheader("Controls")
 
-        # Undo Button
         if st.button("Undo Last Point", use_container_width=True):
             if len(st.session_state.points) > 0:
                 st.session_state.points.pop()
                 st.session_state.last_click = None
                 st.rerun()
 
-        # Clear Button
         if st.button("Clear All Points", type="primary", use_container_width=True):
             st.session_state.points = []
             st.session_state.last_click = None
@@ -83,23 +87,20 @@ if uploaded_file is not None:
 
         st.divider()
 
-        # Save Button (Only shows up when 16 points are selected)
+        # Save Button
         if len(st.session_state.points) == TARGET_POINTS:
             st.success("All 16 points mapped!")
 
-            # Prepare JSON payload
             data = {
                 "image": uploaded_file.name,
                 "original_resolution": [orig_w, orig_h],
                 "points": st.session_state.points
             }
-            json_string = json.dumps(data, indent=4)
 
-            # Native Streamlit download button
             st.download_button(
                 label="Download Points JSON",
-                data=json_string,
-                file_name="../points.json",
+                data=json.dumps(data, indent=4),
+                file_name="points.json",
                 mime="application/json",
                 type="primary",
                 use_container_width=True
